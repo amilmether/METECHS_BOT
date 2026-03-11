@@ -1,0 +1,23 @@
+# Environment secrets — never commit
+.env
+
+# Downloaded video staging
+temp/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
