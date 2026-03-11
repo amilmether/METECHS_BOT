@@ -13,6 +13,7 @@ from services.instagram import (
 )
 from services.caption import generate_caption, scrape_product_title
 from services.website import post_product
+from services.history import save_post
 from utils.cleanup import delete_temp_file, ensure_temp_dir
 from utils.validators import validate_youtube_url, validate_amazon_url, ensure_affiliate_tag
 
@@ -213,6 +214,16 @@ class PostCog(commands.Cog):
                     )
                 )
                 return
+
+            # Save to local history (non-fatal — never blocks success reply)
+            save_post(
+                youtube_url=url,
+                amazon_url=amazon_url or "",
+                product_title=product_title,
+                instagram_media_id=media_id,
+                instagram_permalink=ig_permalink,
+                website_product_id=str(website_product_id),
+            )
 
             caption_preview = (
                 f"\n\n📝 **Caption preview:**\n>>> {caption[:300]}{'…' if len(caption) > 300 else ''}"
