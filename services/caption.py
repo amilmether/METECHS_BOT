@@ -25,7 +25,7 @@ _HEADERS = {
 }
 
 
-def _scrape_product_title(amazon_url: str) -> str:
+def scrape_product_title(amazon_url: str) -> str:
     """Fetch the Amazon product page and extract the product title.
 
     Parameters
@@ -116,7 +116,7 @@ _USER_TEMPLATE = (
 )
 
 
-def generate_caption(amazon_url: str) -> str:
+def generate_caption(amazon_url: str, product_title: str | None = None) -> str:
     """Scrape the Amazon product title and generate an AI caption via Groq.
 
     Parameters
@@ -124,6 +124,8 @@ def generate_caption(amazon_url: str) -> str:
     amazon_url:
         Amazon product URL or amzn.to short link (used both for scraping and
         as the affiliate link embedded in the caption).
+    product_title:
+        Pre-scraped product title. If supplied, the Amazon scrape is skipped.
 
     Returns
     -------
@@ -142,8 +144,9 @@ def generate_caption(amazon_url: str) -> str:
             "GROQ_API_KEY is not set. Add it to your .env file."
         )
 
-    # 1. Scrape the product title
-    product_title = _scrape_product_title(amazon_url)
+    # 1. Scrape the product title (skip if already provided by caller)
+    if product_title is None:
+        product_title = scrape_product_title(amazon_url)
 
     # 2. Build the user prompt
     user_prompt = _USER_TEMPLATE.format(

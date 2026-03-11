@@ -20,8 +20,12 @@ def download_short(url: str) -> str:
 
     Returns
     -------
-    str
-        Absolute path to the downloaded ``.mp4`` file.
+    dict
+        Dictionary with keys:
+        - ``path``: absolute path to the downloaded ``.mp4`` file.
+        - ``video_id``: YouTube video ID string.
+        - ``title``: video title.
+        - ``thumbnail_url``: best available thumbnail URL.
 
     Raises
     ------
@@ -98,5 +102,14 @@ def download_short(url: str) -> str:
             "Check yt-dlp output and temp/ directory."
         )
 
-    log.info(f"[Downloader] Saved: {output_path} ({os.path.getsize(output_path):,} bytes)")
-    return output_path
+    size = os.path.getsize(output_path)
+    log.info(f"[Downloader] Saved: {output_path} ({size:,} bytes)")
+    return {
+        "path": output_path,
+        "video_id": video_id,
+        "title": info.get("title", ""),
+        "thumbnail_url": (
+            info.get("thumbnail")
+            or f"https://img.youtube.com/vi/{video_id}/maxresdefault.jpg"
+        ),
+    }

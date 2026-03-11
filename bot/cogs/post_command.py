@@ -9,8 +9,10 @@ from services.instagram import (
     upload_video_resumable,
     poll_container_status,
     publish_container,
+    get_media_permalink,
 )
-from services.caption import generate_caption
+from services.caption import generate_caption, scrape_product_title
+from services.website import post_product
 from utils.cleanup import delete_temp_file, ensure_temp_dir
 from utils.validators import validate_youtube_url, validate_amazon_url
 
@@ -65,31 +67,41 @@ class PostCog(commands.Cog):
             )
             return
 
-        total_steps = 6 if amazon_url else 5
-        status_msg = await ctx.reply("⏳ **[1/{total}]** Downloading YouTube Short…".replace("{total}", str(total_steps)))
+        # With amazon_url: download, caption, container, upload, poll, publish, website = 7
+        # Without amazon_url: download, container, upload, poll, publish, website = 6
+        total_steps = 7 if amazon_url else 6
+        status_msg = await ctx.reply(f"⏳ **[1/{total_steps}]** Downloading YouTube Short…")
         local_path: str | None = None
         caption: str = ""
+        product_title: str = ""
+        thumbnail_url: str = ""
 
         try:
             ensure_temp_dir()
 
             # ── 2. Download ────────────────────────────────────────────
             try:
-                local_path = await asyncio.to_thread(download_short, url)
+                dl = await asyncio.to_thread(download_short, url)
+                local_path = dl["path"]
+                product_title = dl["title"]      # YouTube title — fallback if no Amazon URL
+                thumbnail_url = dl["thumbnail_url"]
                 log.info(f"[PostCog] Downloaded to: {local_path}")
             except Exception as exc:
                 log.error(f"[PostCog] Download failed: {exc}")
                 await status_msg.edit(content=f"❌ **Download failed.**\n```{exc}```")
                 return
 
-            # ── 3. AI caption (only when amazon_url provided) ──────────
             step = 2
+
+            # ── 3. AI caption (only when amazon_url provided) ──────────
             if amazon_url:
                 await status_msg.edit(
                     content=f"⏳ **[{step}/{total_steps}]** Generating AI caption from Amazon product…"
                 )
                 try:
-                    caption = await asyncio.to_thread(generate_caption, amazon_url)
+                    # Scrape title once — reused for caption AND website posting
+                    product_title = await asyncio.to_thread(scrape_product_title, amazon_url)
+                    caption = await asyncio.to_thread(generate_caption, amazon_url, product_title)
                     log.info(f"[PostCog] Caption generated ({len(caption)} chars).")
                 except Exception as exc:
                     log.error(f"[PostCog] Caption generation failed: {exc}")
@@ -164,12 +176,50 @@ class PostCog(commands.Cog):
                     content=f"❌ **Instagram publish failed.**\n```{exc}```"
                 )
                 return
+            step += 1
 
-            caption_preview = f"\n\n📝 **Caption preview:**\n>>> {caption[:300]}{'…' if len(caption) > 300 else ''}" if caption else ""
+            # ── 8. Update website ──────────────────────────────────────
+            await status_msg.edit(
+                content=f"⏳ **[{step}/{total_steps}]** Updating website product listing…"
+            )
+            ig_permalink = ""
+            website_product_id = "N/A"
+            try:
+                ig_permalink = await asyncio.to_thread(get_media_permalink, media_id)
+                if amazon_url:
+                    website_result = await asyncio.to_thread(
+                        post_product,
+                        product_title or "New Product",
+                        amazon_url,
+                        thumbnail_url,
+                        ig_permalink,
+                    )
+                    website_product_id = website_result.get("id", "N/A")
+                    log.info(f"[PostCog] Website updated — product ID: {website_product_id}")
+                else:
+                    log.info("[PostCog] No Amazon URL provided — skipping website post.")
+            except Exception as exc:
+                # Non-fatal: the Reel is already live — warn but don't fail hard
+                log.error(f"[PostCog] Website update failed: {exc}")
+                await status_msg.edit(
+                    content=(
+                        f"⚠️ **Reel published but website update failed.**\n"
+                        f"📸 Instagram Media ID: `{media_id}`\n"
+                        f"```{exc}```"
+                    )
+                )
+                return
+
+            caption_preview = (
+                f"\n\n📝 **Caption preview:**\n>>> {caption[:300]}{'…' if len(caption) > 300 else ''}"
+                if caption else ""
+            )
             await status_msg.edit(
                 content=(
-                    f"✅ **Reel published successfully!**\n"
-                    f"📸 Instagram Media ID: `{media_id}`"
+                    f"✅ **Done!** Reel published & website updated.\n"
+                    f"📸 Instagram Media ID: `{media_id}`\n"
+                    f"🌐 Website Product ID: `{website_product_id}`\n"
+                    f"🔗 {ig_permalink}"
                     f"{caption_preview}"
                 )
             )

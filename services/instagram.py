@@ -232,3 +232,41 @@ def publish_container(container_id: str) -> str:
     media_id: str = resp.json()["id"]
     log.info(f"[Instagram] Reel published — media ID: {media_id}")
     return media_id
+
+
+def get_media_permalink(media_id: str) -> str:
+    """Fetch the public permalink URL of a published Instagram media object.
+
+    Parameters
+    ----------
+    media_id:
+        The published Instagram media ID returned by :func:`publish_container`.
+
+    Returns
+    -------
+    str
+        The public ``https://www.instagram.com/reel/<code>/`` URL, or an
+        empty string if the field is not available.
+
+    Raises
+    ------
+    RuntimeError
+        If the Graph API call fails.
+    """
+    access_token, _ = _credentials()
+
+    resp = requests.get(
+        f"{GRAPH_API_BASE}/{media_id}",
+        params={"fields": "permalink", "access_token": access_token},
+    )
+
+    if not resp.ok:
+        error = resp.json().get("error", {})
+        raise RuntimeError(
+            f"Could not fetch permalink [{resp.status_code}]: "
+            f"{error.get('message', resp.text)}"
+        )
+
+    permalink: str = resp.json().get("permalink", "")
+    log.info(f"[Instagram] Permalink: {permalink}")
+    return permalink
