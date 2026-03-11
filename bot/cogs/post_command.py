@@ -14,7 +14,7 @@ from services.instagram import (
 from services.caption import generate_caption, scrape_product_title
 from services.website import post_product
 from utils.cleanup import delete_temp_file, ensure_temp_dir
-from utils.validators import validate_youtube_url, validate_amazon_url
+from utils.validators import validate_youtube_url, validate_amazon_url, ensure_affiliate_tag
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,10 @@ class PostCog(commands.Cog):
                 "❌ **Invalid Amazon URL.** Please provide a valid Amazon or amzn.to link."
             )
             return
+
+        # Inject affiliate tag (metechs-21) into any Amazon URL automatically
+        if amazon_url:
+            amazon_url = ensure_affiliate_tag(amazon_url)
 
         # With amazon_url: download, caption, container, upload, poll, publish, website = 7
         # Without amazon_url: download, container, upload, poll, publish, website = 6

@@ -1,0 +1,21 @@
+services:
+  - type: worker
+    name: affiliate-reel-bot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    autoDeployTrigger: commit
+    envVars:
+      - key: DISCORD_TOKEN
+        sync: false
+      - key: INSTAGRAM_ACCESS_TOKEN
+        sync: false
+      - key: INSTAGRAM_BUSINESS_ID
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: AMAZON_AFFILIATE_TAG
+        value: metechs-21
+      - key: WEBSITE_API_URL
+        value: https://metechs-store.vercel.app/api/products/public
+      - key: WEBSITE_API_KEY
+        sync: false
