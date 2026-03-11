@@ -19,6 +19,36 @@ _YOUTUBE_SHORTS_RE = re.compile(
 )
 
 
+# Matches:
+#   https://www.amazon.com/...
+#   https://amazon.co.uk/...
+#   https://amzn.to/<id>       (short link)
+#   https://amzn.eu/<id>
+#   http:// variants
+_AMAZON_URL_RE = re.compile(
+    r"^(https?://)?"
+    r"("
+    r"(www\.)?amazon\.(com|co\.uk|co\.jp|de|fr|it|es|ca|com\.au|com\.br|in|com\.mx|nl|se|pl|ae|sa)/"
+    r"|amzn\.(to|eu)/"
+    r")"
+    r".+",
+    re.IGNORECASE,
+)
+
+
+def validate_amazon_url(url: str) -> bool:
+    """Return True if *url* looks like a valid Amazon product or affiliate link.
+
+    Accepts:
+    - ``https://www.amazon.com/<path>``
+    - ``https://amzn.to/<id>``
+    - International Amazon domains (co.uk, de, fr, etc.)
+    """
+    if not url or not isinstance(url, str):
+        return False
+    return bool(_AMAZON_URL_RE.match(url.strip()))
+
+
 def validate_youtube_url(url: str) -> bool:
     """Return True if *url* looks like a valid YouTube Shorts link.
 

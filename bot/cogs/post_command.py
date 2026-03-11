@@ -10,14 +10,22 @@ from services.instagram import (
     poll_container_status,
     publish_container,
 )
+from services.caption import generate_caption
 from utils.cleanup import delete_temp_file, ensure_temp_dir
-from utils.validators import validate_youtube_url
+from utils.validators import validate_youtube_url, validate_amazon_url
 
 log = logging.getLogger(__name__)
 
+USAGE = (
+    "`!post <youtube_shorts_url> [amazon_affiliate_url]`\n"
+    "Examples:\n"
+    "• `!post https://www.youtube.com/shorts/abc123`\n"
+    "• `!post https://www.youtube.com/shorts/abc123 https://amzn.to/xyz`"
+)
+
 
 class PostCog(commands.Cog):
-    """Handles the !post <youtube_shorts_url> command."""
+    """Handles the !post <youtube_shorts_url> [amazon_affiliate_url] command."""
 
     def __init__(self, bot: commands.Bot) -> None:
         self.bot = bot
@@ -27,30 +35,40 @@ class PostCog(commands.Cog):
     # ------------------------------------------------------------------
 
     @commands.command(name="post")
-    async def post(self, ctx: commands.Context, url: str = None) -> None:
+    async def post(
+        self,
+        ctx: commands.Context,
+        url: str = None,
+        amazon_url: str = None,
+    ) -> None:
         """Download a YouTube Short and publish it as an Instagram Reel.
 
-        Usage: !post <youtube_shorts_url>
+        Usage: !post <youtube_shorts_url> [amazon_affiliate_url]
         """
         # ── 1. Input validation ────────────────────────────────────────
         if not url:
-            await ctx.reply(
-                "❌ **Usage:** `!post <youtube_shorts_url>`\n"
-                "Example: `!post https://www.youtube.com/shorts/abc123`"
-            )
+            await ctx.reply(f"❌ **Usage:** {USAGE}")
             return
 
         if not validate_youtube_url(url):
             await ctx.reply(
-                "❌ **Invalid URL.** Please provide a valid YouTube Shorts link.\n"
+                "❌ **Invalid YouTube URL.** Please provide a valid YouTube Shorts link.\n"
                 "Accepted formats:\n"
                 "• `https://www.youtube.com/shorts/<id>`\n"
                 "• `https://youtu.be/<id>`"
             )
             return
 
-        status_msg = await ctx.reply("⏳ **[1/5]** Downloading YouTube Short…")
+        if amazon_url and not validate_amazon_url(amazon_url):
+            await ctx.reply(
+                "❌ **Invalid Amazon URL.** Please provide a valid Amazon or amzn.to link."
+            )
+            return
+
+        total_steps = 6 if amazon_url else 5
+        status_msg = await ctx.reply("⏳ **[1/{total}]** Downloading YouTube Short…".replace("{total}", str(total_steps)))
         local_path: str | None = None
+        caption: str = ""
 
         try:
             ensure_temp_dir()
@@ -61,18 +79,33 @@ class PostCog(commands.Cog):
                 log.info(f"[PostCog] Downloaded to: {local_path}")
             except Exception as exc:
                 log.error(f"[PostCog] Download failed: {exc}")
-                await status_msg.edit(
-                    content=f"❌ **Download failed.**\n```{exc}```"
-                )
+                await status_msg.edit(content=f"❌ **Download failed.**\n```{exc}```")
                 return
 
-            # ── 3. Create Instagram container ──────────────────────────
+            # ── 3. AI caption (only when amazon_url provided) ──────────
+            step = 2
+            if amazon_url:
+                await status_msg.edit(
+                    content=f"⏳ **[{step}/{total_steps}]** Generating AI caption from Amazon product…"
+                )
+                try:
+                    caption = await asyncio.to_thread(generate_caption, amazon_url)
+                    log.info(f"[PostCog] Caption generated ({len(caption)} chars).")
+                except Exception as exc:
+                    log.error(f"[PostCog] Caption generation failed: {exc}")
+                    await status_msg.edit(
+                        content=f"❌ **Caption generation failed.**\n```{exc}```"
+                    )
+                    return
+                step += 1
+
+            # ── 4. Create Instagram container ──────────────────────────
             await status_msg.edit(
-                content="⏳ **[2/5]** Creating Instagram Reel container…"
+                content=f"⏳ **[{step}/{total_steps}]** Creating Instagram Reel container…"
             )
             try:
                 container_id, upload_uri = await asyncio.to_thread(
-                    create_reel_container, caption=""
+                    create_reel_container, caption=caption
                 )
                 log.info(f"[PostCog] Container created: {container_id}")
             except Exception as exc:
@@ -81,24 +114,24 @@ class PostCog(commands.Cog):
                     content=f"❌ **Instagram API error** (create container).\n```{exc}```"
                 )
                 return
+            step += 1
 
-            # ── 4. Upload video binary ─────────────────────────────────
+            # ── 5. Upload video binary ─────────────────────────────────
             await status_msg.edit(
-                content="⏳ **[3/5]** Uploading video to Instagram…"
+                content=f"⏳ **[{step}/{total_steps}]** Uploading video to Instagram…"
             )
             try:
                 await asyncio.to_thread(upload_video_resumable, upload_uri, local_path)
                 log.info("[PostCog] Video upload complete.")
             except Exception as exc:
                 log.error(f"[PostCog] Video upload failed: {exc}")
-                await status_msg.edit(
-                    content=f"❌ **Video upload failed.**\n```{exc}```"
-                )
+                await status_msg.edit(content=f"❌ **Video upload failed.**\n```{exc}```")
                 return
+            step += 1
 
-            # ── 5. Poll processing status ──────────────────────────────
+            # ── 6. Poll processing status ──────────────────────────────
             await status_msg.edit(
-                content="⏳ **[4/5]** Waiting for Instagram to process video…"
+                content=f"⏳ **[{step}/{total_steps}]** Waiting for Instagram to process video…"
             )
             try:
                 await asyncio.to_thread(poll_container_status, container_id)
@@ -118,9 +151,10 @@ class PostCog(commands.Cog):
                     content=f"❌ **Instagram processing error.**\n```{exc}```"
                 )
                 return
+            step += 1
 
-            # ── 6. Publish ─────────────────────────────────────────────
-            await status_msg.edit(content="⏳ **[5/5]** Publishing Reel…")
+            # ── 7. Publish ─────────────────────────────────────────────
+            await status_msg.edit(content=f"⏳ **[{step}/{total_steps}]** Publishing Reel…")
             try:
                 media_id = await asyncio.to_thread(publish_container, container_id)
                 log.info(f"[PostCog] Reel published: {media_id}")
@@ -131,10 +165,12 @@ class PostCog(commands.Cog):
                 )
                 return
 
+            caption_preview = f"\n\n📝 **Caption preview:**\n>>> {caption[:300]}{'…' if len(caption) > 300 else ''}" if caption else ""
             await status_msg.edit(
                 content=(
                     f"✅ **Reel published successfully!**\n"
                     f"📸 Instagram Media ID: `{media_id}`"
+                    f"{caption_preview}"
                 )
             )
 
@@ -158,10 +194,7 @@ class PostCog(commands.Cog):
         self, ctx: commands.Context, error: commands.CommandError
     ) -> None:
         if isinstance(error, commands.MissingRequiredArgument):
-            await ctx.reply(
-                "❌ **Usage:** `!post <youtube_shorts_url>`\n"
-                "Example: `!post https://www.youtube.com/shorts/abc123`"
-            )
+            await ctx.reply(f"❌ **Usage:** {USAGE}")
         else:
             log.error(f"[PostCog] Command error: {error}")
             await ctx.reply(f"❌ **Command error:** `{error}`")
