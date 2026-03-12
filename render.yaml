@@ -19,3 +19,7 @@ services:
         value: https://metechs-store.vercel.app/api/products/public
       - key: WEBSITE_API_KEY
         sync: false
+      # YouTube OAuth2 token (base64-encoded JSON from yt-dlp-youtube-oauth2 plugin).
+      # Run the one-time auth flow locally (see README), then paste the base64 value here.
+      - key: YOUTUBE_OAUTH2_TOKEN
+        sync: false

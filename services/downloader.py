@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 import logging
 
@@ -8,6 +10,44 @@ from utils.cleanup import ensure_temp_dir
 log = logging.getLogger(__name__)
 
 TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp")
+
+# yt-dlp cache dir used for OAuth2 token storage.
+_CACHE_DIR = "/tmp/yt-dlp-cache"
+_OAUTH2_TOKEN_PATH = os.path.join(_CACHE_DIR, "youtube-oauth2", "access_token_data.json")
+
+# Module-level flag — set up once per process.
+_OAUTH2_READY: bool | None = None  # None = not yet checked
+
+
+def _setup_oauth2() -> bool:
+    """Decode YOUTUBE_OAUTH2_TOKEN env var and write it to the yt-dlp cache.
+
+    Returns True if the token is in place and yt-dlp should use OAuth2,
+    False if the env var is absent (fall back to embedded/mobile clients).
+    """
+    global _OAUTH2_READY
+    if _OAUTH2_READY is not None:
+        return _OAUTH2_READY
+
+    token_b64 = os.getenv("YOUTUBE_OAUTH2_TOKEN")
+    if not token_b64:
+        log.info("[Downloader] YOUTUBE_OAUTH2_TOKEN not set — using embedded/mobile clients")
+        _OAUTH2_READY = False
+        return False
+
+    try:
+        decoded = base64.b64decode(token_b64).decode("utf-8")
+        json.loads(decoded)  # validate it's real JSON before writing
+        os.makedirs(os.path.dirname(_OAUTH2_TOKEN_PATH), exist_ok=True)
+        with open(_OAUTH2_TOKEN_PATH, "w") as fh:
+            fh.write(decoded)
+        log.info("[Downloader] YouTube OAuth2 token loaded from YOUTUBE_OAUTH2_TOKEN")
+        _OAUTH2_READY = True
+        return True
+    except Exception as exc:
+        log.warning("[Downloader] Failed to load YOUTUBE_OAUTH2_TOKEN: %s — falling back", exc)
+        _OAUTH2_READY = False
+        return False
 
 
 def download_short(url: str) -> str:
@@ -36,16 +76,29 @@ def download_short(url: str) -> str:
     """
     ensure_temp_dir()
 
+    use_oauth2 = _setup_oauth2()
+
+    # OAuth2: authenticates via a long-lived refresh token — works from any IP forever.
+    # Fallback: tv_embedded/ios/android are PO-token-exempt for public videos,
+    # but may be blocked on some datacenter IP ranges.
+    if use_oauth2:
+        extractor_args: dict = {"youtube": {"player_client": ["web"]}}
+        auth_opts: dict = {
+            "username": "oauth2",
+            "password": "",
+            "cachedir": _CACHE_DIR,
+        }
+        log.info("[Downloader] Using OAuth2 authentication")
+    else:
+        extractor_args = {"youtube": {"player_client": ["tv_embedded", "ios", "android", "mweb"]}}
+        auth_opts = {}
+
     # yt-dlp options — absolute best quality merged into MP4.
     # Strategy:
     #   - No resolution cap: grab the highest available resolution
     #   - Prefer H.264/AAC for direct Instagram compatibility (no re-encode)
     #   - Fall back to VP9/opus or any codec → ffmpeg re-encodes to H.264/AAC MP4
     #   - remux_video + convert_video ensure final container is always .mp4
-    # tv_embedded and ios/android clients are exempt from YouTube's
-    # Proof-of-Origin (PO) token requirement that blocks datacenter IPs
-    # (Render, AWS, GCP, etc.) when using the default "web" client.
-    # No cookies or authentication needed for any public video.
     ydl_opts: dict = {
         "format": (
             # 1st choice: best H.264 video + best m4a audio (no re-encode, fastest)
@@ -60,11 +113,8 @@ def download_short(url: str) -> str:
             "/best"
         ),
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["tv_embedded", "ios", "android", "mweb"],
-            }
-        },
+        "extractor_args": extractor_args,
+        **auth_opts,
         "merge_output_format": "mp4",
         "postprocessors": [
             {
