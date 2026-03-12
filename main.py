@@ -1,5 +1,7 @@
 import os
+import threading
 import logging
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from bot.client import MetechsBot
@@ -30,6 +32,29 @@ logging.basicConfig(level=logging.INFO, handlers=[_stream_handler, _file_handler
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Minimal HTTP health-check server
+# Render (when deployed as a Web Service) requires at least one open port.
+# This keeps the deployment alive; a Background Worker doesn't need this.
+# ---------------------------------------------------------------------------
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+
+    def log_message(self, format: str, *args: object) -> None:  # suppress access logs
+        pass
+
+
+def _start_health_server() -> None:
+    port = int(os.getenv("PORT", "8080"))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    log.info("Health-check server listening on port %d", port)
+
+
 def main() -> None:
     token = os.getenv("DISCORD_TOKEN")
     if not token:
@@ -37,6 +62,7 @@ def main() -> None:
             "DISCORD_TOKEN is not set. Copy .env.example to .env and fill in your token."
         )
 
+    _start_health_server()  # satisfy Render's port-scan when running as a Web Service
     bot = MetechsBot()
     log.info("Starting METECHS_BOT...")
     bot.run(token, log_handler=None)  # logging already configured above
