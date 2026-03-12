@@ -85,20 +85,17 @@ def download_short(url: str) -> str:
     # Fallback: tv_embedded/ios/android are PO-token-exempt but may be blocked
     # on some datacenter IP ranges (Render, AWS, GCP).
     if use_oauth2:
-        client_id = os.getenv("YOUTUBE_OAUTH2_CLIENT_ID", "")
-        client_secret = os.getenv("YOUTUBE_OAUTH2_CLIENT_SECRET", "")
-        oauth2_args: dict = {"player_client": ["web"]}
-        if client_id:
-            oauth2_args["oauth2_client_id"] = [client_id]
-        if client_secret:
-            oauth2_args["oauth2_client_secret"] = [client_secret]
-        extractor_args: dict = {"youtube": oauth2_args}
+        # When using OAuth2, do NOT force a player_client.
+        # The plugin handles client selection internally.
+        # client_id and client_secret are already embedded in the token
+        # file — passing them again via extractor_args causes conflicts.
+        extractor_args: dict = {}
         auth_opts: dict = {
             "username": "oauth2",
             "password": "",
             "cachedir": _CACHE_DIR,
         }
-        log.info("[Downloader] Using OAuth2 (custom client: %s)", bool(client_id))
+        log.info("[Downloader] Using OAuth2 authentication")
     else:
         extractor_args = {"youtube": {"player_client": ["tv_embedded", "ios", "android", "mweb"]}}
         auth_opts = {}
@@ -124,7 +121,7 @@ def download_short(url: str) -> str:
             "/best"
         ),
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
-        "extractor_args": extractor_args,
+        **({"extractor_args": extractor_args} if extractor_args else {}),
         **auth_opts,
         "merge_output_format": "mp4",
         "postprocessors": [
