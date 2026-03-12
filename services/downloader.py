@@ -11,19 +11,17 @@ log = logging.getLogger(__name__)
 
 TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp")
 
-# yt-dlp cache dir used for OAuth2 token storage.
+# yt-dlp cache dir for OAuth2 token persistence across calls.
 _CACHE_DIR = "/tmp/yt-dlp-cache"
 _OAUTH2_TOKEN_PATH = os.path.join(_CACHE_DIR, "youtube-oauth2", "access_token_data.json")
 
-# Module-level flag — set up once per process.
-_OAUTH2_READY: bool | None = None  # None = not yet checked
+_OAUTH2_READY: bool | None = None  # None = not yet resolved
 
 
 def _setup_oauth2() -> bool:
-    """Decode YOUTUBE_OAUTH2_TOKEN env var and write it to the yt-dlp cache.
+    """Write the cached OAuth2 token (from YOUTUBE_OAUTH2_TOKEN env var) to disk.
 
-    Returns True if the token is in place and yt-dlp should use OAuth2,
-    False if the env var is absent (fall back to embedded/mobile clients).
+    Returns True if OAuth2 should be used, False to fall back to mobile clients.
     """
     global _OAUTH2_READY
     if _OAUTH2_READY is not None:
@@ -37,7 +35,7 @@ def _setup_oauth2() -> bool:
 
     try:
         decoded = base64.b64decode(token_b64).decode("utf-8")
-        json.loads(decoded)  # validate it's real JSON before writing
+        json.loads(decoded)  # validate JSON before writing
         os.makedirs(os.path.dirname(_OAUTH2_TOKEN_PATH), exist_ok=True)
         with open(_OAUTH2_TOKEN_PATH, "w") as fh:
             fh.write(decoded)
@@ -78,20 +76,33 @@ def download_short(url: str) -> str:
 
     use_oauth2 = _setup_oauth2()
 
-    # OAuth2: authenticates via a long-lived refresh token — works from any IP forever.
-    # Fallback: tv_embedded/ios/android are PO-token-exempt for public videos,
-    # but may be blocked on some datacenter IP ranges.
+    # OAuth2 with custom Google client credentials — the plugin's built-in client ID
+    # was revoked by Google in late 2024. You MUST supply your own via:
+    #   YOUTUBE_OAUTH2_CLIENT_ID     — from Google Cloud Console
+    #   YOUTUBE_OAUTH2_CLIENT_SECRET — from Google Cloud Console
+    #   YOUTUBE_OAUTH2_TOKEN         — base64(access_token_data.json) after auth flow
+    #
+    # Fallback: tv_embedded/ios/android are PO-token-exempt but may be blocked
+    # on some datacenter IP ranges (Render, AWS, GCP).
     if use_oauth2:
-        extractor_args: dict = {"youtube": {"player_client": ["web"]}}
+        client_id = os.getenv("YOUTUBE_OAUTH2_CLIENT_ID", "")
+        client_secret = os.getenv("YOUTUBE_OAUTH2_CLIENT_SECRET", "")
+        oauth2_args: dict = {"player_client": ["web"]}
+        if client_id:
+            oauth2_args["oauth2_client_id"] = [client_id]
+        if client_secret:
+            oauth2_args["oauth2_client_secret"] = [client_secret]
+        extractor_args: dict = {"youtube": oauth2_args}
         auth_opts: dict = {
             "username": "oauth2",
             "password": "",
             "cachedir": _CACHE_DIR,
         }
-        log.info("[Downloader] Using OAuth2 authentication")
+        log.info("[Downloader] Using OAuth2 (custom client: %s)", bool(client_id))
     else:
         extractor_args = {"youtube": {"player_client": ["tv_embedded", "ios", "android", "mweb"]}}
         auth_opts = {}
+
 
     # yt-dlp options — absolute best quality merged into MP4.
     # Strategy:

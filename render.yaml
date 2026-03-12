@@ -19,7 +19,13 @@ services:
         value: https://metechs-store.vercel.app/api/products/public
       - key: WEBSITE_API_KEY
         sync: false
-      # YouTube OAuth2 token (base64-encoded JSON from yt-dlp-youtube-oauth2 plugin).
-      # Run the one-time auth flow locally (see README), then paste the base64 value here.
+      # YouTube OAuth2 — custom Google Cloud credentials (required; plugin's built-in
+      # client was revoked by Google in late 2024).
+      # See README for the one-time setup steps.
+      - key: YOUTUBE_OAUTH2_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_OAUTH2_CLIENT_SECRET
+        sync: false
+      # base64(access_token_data.json) produced after running the auth flow once locally.
       - key: YOUTUBE_OAUTH2_TOKEN
         sync: false
