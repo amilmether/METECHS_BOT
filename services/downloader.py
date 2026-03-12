@@ -93,27 +93,45 @@ def download_short(url: str) -> str:
     #   - remux_video + convert_video ensure final container is always .mp4
     cookies_file: str | None = _get_cookies_path()
 
+    # Player client strategy:
+    #
+    # Cookies are browser (web) cookies — pairing them with mobile clients causes
+    # auth conflicts because mobile clients use their own signed-URL tokens, not
+    # browser session cookies.
+    #
+    # • With cookies  → try "web" first (uses the cookie), then fall back to
+    #                   embedded/mobile clients that don't need auth.
+    # • Without cookies → skip "web" entirely; use tv_embedded/ios/android which
+    #                     work for all public videos without any authentication,
+    #                     even from datacenter IPs.
+    if cookies_file:
+        player_clients = ["web", "tv_embedded", "ios", "android"]
+        log.info("[Downloader] Using web client with cookies + embedded fallbacks")
+    else:
+        player_clients = ["tv_embedded", "ios", "android", "mweb"]
+        log.info("[Downloader] No cookies — using embedded/mobile clients")
+
     ydl_opts: dict = {
         "format": (
             # 1st choice: best H.264 video + best m4a audio (no re-encode, fastest)
             "bestvideo[vcodec^=avc1]+bestaudio[ext=m4a]"
             # 2nd choice: best video any codec + best m4a audio (ffmpeg re-encodes video)
             "/bestvideo+bestaudio[ext=m4a]"
-            # 3rd choice: best video + best audio any format
+            # 3rd choice: best video + best audio any format (DASH)
             "/bestvideo+bestaudio"
-            # Last resort: best pre-merged single file
+            # 4th choice: best pre-merged MP4 (HLS from ios/tv_embedded clients)
+            "/best[ext=mp4]"
+            # Last resort: absolutely anything available
             "/best"
         ),
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
-        # Mobile player clients bypass YouTube's bot-detection for datacenter IPs.
-        # ios uses signed URLs; android and web are fallbacks.
         "extractor_args": {
             "youtube": {
-                "player_client": ["ios", "android", "web"],
+                "player_client": player_clients,
             }
         },
-        # Attach cookies when available (required if IP-level blocking persists).
-        **(  {"cookiefile": cookies_file} if cookies_file else {} ),
+        # Only attach the cookie file when using the web client.
+        **({"cookiefile": cookies_file} if cookies_file else {}),
 
         "merge_output_format": "mp4",
         "postprocessors": [
