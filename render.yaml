@@ -19,3 +19,7 @@ services:
         value: https://metechs-store.vercel.app/api/products/public
       - key: WEBSITE_API_KEY
         sync: false
+      # Optional: set to the container path of a Netscape cookies.txt if iOS/Android
+      # player clients are ever blocked. Leave unset to rely on mobile clients only.
+      - key: YOUTUBE_COOKIES_FILE
+        sync: false

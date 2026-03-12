@@ -42,6 +42,10 @@ def download_short(url: str) -> str:
     #   - Prefer H.264/AAC for direct Instagram compatibility (no re-encode)
     #   - Fall back to VP9/opus or any codec → ffmpeg re-encodes to H.264/AAC MP4
     #   - remux_video + convert_video ensure final container is always .mp4
+    # Optional: path to a Netscape-format cookies.txt exported from a browser.
+    # Set YOUTUBE_COOKIES_FILE=/path/to/cookies.txt in your environment/Render env vars.
+    cookies_file: str | None = os.getenv("YOUTUBE_COOKIES_FILE")
+
     ydl_opts: dict = {
         "format": (
             # 1st choice: best H.264 video + best m4a audio (no re-encode, fastest)
@@ -54,6 +58,19 @@ def download_short(url: str) -> str:
             "/best"
         ),
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
+        # Use mobile player clients to bypass YouTube bot-detection.
+        # ios  → signed URLs, no cookies required, works for all public videos.
+        # android and web are tried in order as fallbacks.
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["ios", "android", "web"],
+            }
+        },
+        **(  # attach cookie file only when the path is set and the file exists
+            {"cookiefile": cookies_file}
+            if cookies_file and os.path.isfile(cookies_file)
+            else {}
+        ),
         "merge_output_format": "mp4",
         "postprocessors": [
             {
