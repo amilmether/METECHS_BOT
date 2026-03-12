@@ -1,7 +1,5 @@
-import base64
 import os
 import logging
-import tempfile
 
 import yt_dlp
 
@@ -10,53 +8,6 @@ from utils.cleanup import ensure_temp_dir
 log = logging.getLogger(__name__)
 
 TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp")
-
-# Module-level cache so we only decode / write the temp file once per process.
-_COOKIES_PATH: str | None = ""
-
-
-def _get_cookies_path() -> str | None:
-    """Return a path to a Netscape cookies.txt for yt-dlp, or None.
-
-    Resolution order:
-    1. ``YOUTUBE_COOKIES_FILE`` – direct path to an existing file.
-    2. ``YOUTUBE_COOKIES_B64``  – base64-encoded cookies.txt content.
-       Decoded and written to a temp file on first call, then cached.
-    """
-    global _COOKIES_PATH
-
-    # Empty string = not yet resolved; None = resolved to "no cookies".
-    if _COOKIES_PATH != "":
-        return _COOKIES_PATH
-
-    # 1. Direct file path
-    direct = os.getenv("YOUTUBE_COOKIES_FILE")
-    if direct and os.path.isfile(direct):
-        _COOKIES_PATH = direct
-        log.info("[Downloader] Using YouTube cookies from YOUTUBE_COOKIES_FILE")
-        return _COOKIES_PATH
-
-    # 2. Base64-encoded cookies stored in an env var (ideal for Render / Docker)
-    b64 = os.getenv("YOUTUBE_COOKIES_B64")
-    if b64:
-        try:
-            decoded = base64.b64decode(b64).decode("utf-8")
-            tmp = tempfile.NamedTemporaryFile(
-                mode="w", suffix=".txt", delete=False, prefix="yt_cookies_"
-            )
-            tmp.write(decoded)
-            tmp.close()
-            _COOKIES_PATH = tmp.name
-            log.info(
-                "[Downloader] YouTube cookies decoded from YOUTUBE_COOKIES_B64 → %s",
-                _COOKIES_PATH,
-            )
-            return _COOKIES_PATH
-        except Exception as exc:
-            log.warning("[Downloader] Failed to decode YOUTUBE_COOKIES_B64: %s", exc)
-
-    _COOKIES_PATH = None  # no cookies available
-    return None
 
 
 def download_short(url: str) -> str:
@@ -91,23 +42,10 @@ def download_short(url: str) -> str:
     #   - Prefer H.264/AAC for direct Instagram compatibility (no re-encode)
     #   - Fall back to VP9/opus or any codec → ffmpeg re-encodes to H.264/AAC MP4
     #   - remux_video + convert_video ensure final container is always .mp4
-    cookies_file: str | None = _get_cookies_path()
-
-    # Player client strategy — NEVER use "web":
-    #
-    # Since mid-2024 YouTube requires a Proof-of-Origin (PO) token for the "web"
-    # client on all datacenter IPs (AWS, Render, GCP, etc.). Even perfectly valid
-    # browser cookies are rejected without a PO token, which is the source of the
-    # "Sign in to confirm you're not a bot" error.
-    #
-    # tv_embedded and ios/android are exempt from the PO-token requirement and
-    # work from any IP for all public videos — no cookies, no tokens needed.
-    #
-    # Cookies (if provided) are kept for age-restricted content only; they are
-    # harmlessly ignored by clients that don't support them.
-    player_clients = ["tv_embedded", "ios", "android", "mweb"]
-    log.info("[Downloader] Using embedded/mobile clients (PO-token-free)")
-
+    # tv_embedded and ios/android clients are exempt from YouTube's
+    # Proof-of-Origin (PO) token requirement that blocks datacenter IPs
+    # (Render, AWS, GCP, etc.) when using the default "web" client.
+    # No cookies or authentication needed for any public video.
     ydl_opts: dict = {
         "format": (
             # 1st choice: best H.264 video + best m4a audio (no re-encode, fastest)
@@ -124,12 +62,9 @@ def download_short(url: str) -> str:
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
         "extractor_args": {
             "youtube": {
-                "player_client": player_clients,
+                "player_client": ["tv_embedded", "ios", "android", "mweb"],
             }
         },
-        # Only attach the cookie file when using the web client.
-        **({"cookiefile": cookies_file} if cookies_file else {}),
-
         "merge_output_format": "mp4",
         "postprocessors": [
             {
