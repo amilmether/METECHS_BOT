@@ -93,23 +93,20 @@ def download_short(url: str) -> str:
     #   - remux_video + convert_video ensure final container is always .mp4
     cookies_file: str | None = _get_cookies_path()
 
-    # Player client strategy:
+    # Player client strategy — NEVER use "web":
     #
-    # Cookies are browser (web) cookies — pairing them with mobile clients causes
-    # auth conflicts because mobile clients use their own signed-URL tokens, not
-    # browser session cookies.
+    # Since mid-2024 YouTube requires a Proof-of-Origin (PO) token for the "web"
+    # client on all datacenter IPs (AWS, Render, GCP, etc.). Even perfectly valid
+    # browser cookies are rejected without a PO token, which is the source of the
+    # "Sign in to confirm you're not a bot" error.
     #
-    # • With cookies  → try "web" first (uses the cookie), then fall back to
-    #                   embedded/mobile clients that don't need auth.
-    # • Without cookies → skip "web" entirely; use tv_embedded/ios/android which
-    #                     work for all public videos without any authentication,
-    #                     even from datacenter IPs.
-    if cookies_file:
-        player_clients = ["web", "tv_embedded", "ios", "android"]
-        log.info("[Downloader] Using web client with cookies + embedded fallbacks")
-    else:
-        player_clients = ["tv_embedded", "ios", "android", "mweb"]
-        log.info("[Downloader] No cookies — using embedded/mobile clients")
+    # tv_embedded and ios/android are exempt from the PO-token requirement and
+    # work from any IP for all public videos — no cookies, no tokens needed.
+    #
+    # Cookies (if provided) are kept for age-restricted content only; they are
+    # harmlessly ignored by clients that don't support them.
+    player_clients = ["tv_embedded", "ios", "android", "mweb"]
+    log.info("[Downloader] Using embedded/mobile clients (PO-token-free)")
 
     ydl_opts: dict = {
         "format": (
