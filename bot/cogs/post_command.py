@@ -1,6 +1,7 @@
 import asyncio
 import logging
 
+import discord
 from discord.ext import commands
 
 from services.downloader import download_short
@@ -18,6 +19,21 @@ from utils.cleanup import delete_temp_file, ensure_temp_dir
 from utils.validators import validate_youtube_url, validate_amazon_url, ensure_affiliate_tag
 
 log = logging.getLogger(__name__)
+
+# Discord hard limit for message content.
+_DISCORD_MAX = 2000
+
+
+def _fmt_err(label: str, exc: Exception) -> str:
+    """Format an error for a Discord status message, truncating if necessary."""
+    prefix = f"❌ **{label}**\n```"
+    suffix = "```"
+    available = _DISCORD_MAX - len(prefix) - len(suffix)
+    msg = str(exc)
+    if len(msg) > available:
+        msg = msg[:available - 3] + "..."
+    return f"{prefix}{msg}{suffix}"
+
 
 USAGE = (
     "`!post <youtube_shorts_url> [amazon_affiliate_url]`\n"
@@ -93,7 +109,7 @@ class PostCog(commands.Cog):
                 log.info(f"[PostCog] Downloaded to: {local_path}")
             except Exception as exc:
                 log.error(f"[PostCog] Download failed: {exc}")
-                await status_msg.edit(content=f"❌ **Download failed.**\n```{exc}```")
+                await status_msg.edit(content=_fmt_err("Download failed.", exc))
                 return
 
             step = 2
@@ -110,9 +126,7 @@ class PostCog(commands.Cog):
                     log.info(f"[PostCog] Caption generated ({len(caption)} chars).")
                 except Exception as exc:
                     log.error(f"[PostCog] Caption generation failed: {exc}")
-                    await status_msg.edit(
-                        content=f"❌ **Caption generation failed.**\n```{exc}```"
-                    )
+                    await status_msg.edit(content=_fmt_err("Caption generation failed.", exc))
                     return
                 step += 1
 
@@ -127,9 +141,7 @@ class PostCog(commands.Cog):
                 log.info(f"[PostCog] Container created: {container_id}")
             except Exception as exc:
                 log.error(f"[PostCog] Container creation failed: {exc}")
-                await status_msg.edit(
-                    content=f"❌ **Instagram API error** (create container).\n```{exc}```"
-                )
+                await status_msg.edit(content=_fmt_err("Instagram API error (create container).", exc))
                 return
             step += 1
 
@@ -142,7 +154,7 @@ class PostCog(commands.Cog):
                 log.info("[PostCog] Video upload complete.")
             except Exception as exc:
                 log.error(f"[PostCog] Video upload failed: {exc}")
-                await status_msg.edit(content=f"❌ **Video upload failed.**\n```{exc}```")
+                await status_msg.edit(content=_fmt_err("Video upload failed.", exc))
                 return
             step += 1
 
@@ -164,9 +176,7 @@ class PostCog(commands.Cog):
                 return
             except Exception as exc:
                 log.error(f"[PostCog] Container polling error: {exc}")
-                await status_msg.edit(
-                    content=f"❌ **Instagram processing error.**\n```{exc}```"
-                )
+                await status_msg.edit(content=_fmt_err("Instagram processing error.", exc))
                 return
             step += 1
 
@@ -177,9 +187,7 @@ class PostCog(commands.Cog):
                 log.info(f"[PostCog] Reel published: {media_id}")
             except Exception as exc:
                 log.error(f"[PostCog] Publish failed: {exc}")
-                await status_msg.edit(
-                    content=f"❌ **Instagram publish failed.**\n```{exc}```"
-                )
+                await status_msg.edit(content=_fmt_err("Instagram publish failed.", exc))
                 return
             step += 1
 
@@ -260,6 +268,14 @@ class PostCog(commands.Cog):
     ) -> None:
         if isinstance(error, commands.MissingRequiredArgument):
             await ctx.reply(f"❌ **Usage:** {USAGE}")
+        elif isinstance(error, discord.errors.DiscordServerError):
+            # Discord itself is having issues (503 overflow etc.) — just log, don't reply.
+            log.error(f"[PostCog] Discord server error (503), cannot send reply: {error}")
         else:
             log.error(f"[PostCog] Command error: {error}")
-            await ctx.reply(f"❌ **Command error:** `{error}`")
+            # Truncate to fit Discord's 2000 char limit.
+            msg = f"❌ **Command error:** `{str(error)[:1950]}`"
+            try:
+                await ctx.reply(msg)
+            except discord.errors.DiscordServerError as send_err:
+                log.error(f"[PostCog] Failed to send error reply: {send_err}")
