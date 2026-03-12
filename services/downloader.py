@@ -1,5 +1,7 @@
+import base64
 import os
 import logging
+import tempfile
 
 import yt_dlp
 
@@ -8,6 +10,53 @@ from utils.cleanup import ensure_temp_dir
 log = logging.getLogger(__name__)
 
 TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "temp")
+
+# Module-level cache so we only decode / write the temp file once per process.
+_COOKIES_PATH: str | None = ""
+
+
+def _get_cookies_path() -> str | None:
+    """Return a path to a Netscape cookies.txt for yt-dlp, or None.
+
+    Resolution order:
+    1. ``YOUTUBE_COOKIES_FILE`` – direct path to an existing file.
+    2. ``YOUTUBE_COOKIES_B64``  – base64-encoded cookies.txt content.
+       Decoded and written to a temp file on first call, then cached.
+    """
+    global _COOKIES_PATH
+
+    # Empty string = not yet resolved; None = resolved to "no cookies".
+    if _COOKIES_PATH != "":
+        return _COOKIES_PATH
+
+    # 1. Direct file path
+    direct = os.getenv("YOUTUBE_COOKIES_FILE")
+    if direct and os.path.isfile(direct):
+        _COOKIES_PATH = direct
+        log.info("[Downloader] Using YouTube cookies from YOUTUBE_COOKIES_FILE")
+        return _COOKIES_PATH
+
+    # 2. Base64-encoded cookies stored in an env var (ideal for Render / Docker)
+    b64 = os.getenv("YOUTUBE_COOKIES_B64")
+    if b64:
+        try:
+            decoded = base64.b64decode(b64).decode("utf-8")
+            tmp = tempfile.NamedTemporaryFile(
+                mode="w", suffix=".txt", delete=False, prefix="yt_cookies_"
+            )
+            tmp.write(decoded)
+            tmp.close()
+            _COOKIES_PATH = tmp.name
+            log.info(
+                "[Downloader] YouTube cookies decoded from YOUTUBE_COOKIES_B64 → %s",
+                _COOKIES_PATH,
+            )
+            return _COOKIES_PATH
+        except Exception as exc:
+            log.warning("[Downloader] Failed to decode YOUTUBE_COOKIES_B64: %s", exc)
+
+    _COOKIES_PATH = None  # no cookies available
+    return None
 
 
 def download_short(url: str) -> str:
@@ -42,9 +91,7 @@ def download_short(url: str) -> str:
     #   - Prefer H.264/AAC for direct Instagram compatibility (no re-encode)
     #   - Fall back to VP9/opus or any codec → ffmpeg re-encodes to H.264/AAC MP4
     #   - remux_video + convert_video ensure final container is always .mp4
-    # Optional: path to a Netscape-format cookies.txt exported from a browser.
-    # Set YOUTUBE_COOKIES_FILE=/path/to/cookies.txt in your environment/Render env vars.
-    cookies_file: str | None = os.getenv("YOUTUBE_COOKIES_FILE")
+    cookies_file: str | None = _get_cookies_path()
 
     ydl_opts: dict = {
         "format": (
@@ -58,19 +105,16 @@ def download_short(url: str) -> str:
             "/best"
         ),
         "outtmpl": os.path.join(TEMP_DIR, "%(id)s.%(ext)s"),
-        # Use mobile player clients to bypass YouTube bot-detection.
-        # ios  → signed URLs, no cookies required, works for all public videos.
-        # android and web are tried in order as fallbacks.
+        # Mobile player clients bypass YouTube's bot-detection for datacenter IPs.
+        # ios uses signed URLs; android and web are fallbacks.
         "extractor_args": {
             "youtube": {
                 "player_client": ["ios", "android", "web"],
             }
         },
-        **(  # attach cookie file only when the path is set and the file exists
-            {"cookiefile": cookies_file}
-            if cookies_file and os.path.isfile(cookies_file)
-            else {}
-        ),
+        # Attach cookies when available (required if IP-level blocking persists).
+        **(  {"cookiefile": cookies_file} if cookies_file else {} ),
+
         "merge_output_format": "mp4",
         "postprocessors": [
             {

@@ -23,3 +23,8 @@ services:
       # player clients are ever blocked. Leave unset to rely on mobile clients only.
       - key: YOUTUBE_COOKIES_FILE
         sync: false
+      # Preferred alternative to YOUTUBE_COOKIES_FILE for Render:
+      # base64-encode your cookies.txt and paste the result here.
+      # Generate with:  base64 -w 0 cookies.txt
+      - key: YOUTUBE_COOKIES_B64
+        sync: false
